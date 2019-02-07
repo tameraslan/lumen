@@ -5,19 +5,13 @@
   #define NUM_SENSORS 4
   // filtered sensor data is kept here:
   float sensorVoltage[NUM_SENSORS];
-  
-  // Declaration
-  //  bool* capture = 0;
-  //  int sensorArraySize = NUM_SENSORS;
-  //
-  
-  
+
   bool capture[NUM_SENSORS];
   long unsigned int captureTime[NUM_SENSORS];
   
   
   // Filtering variables (averaging)
-  #define NUM_READINGS 32
+  #define NUM_READINGS 8
   int readings[NUM_SENSORS][NUM_READINGS];
   long unsigned int runningTotal[NUM_SENSORS];                  // the running total
   int average[NUM_SENSORS];
@@ -25,10 +19,10 @@
   int index = 0;                  // the index of the current reading
   unsigned long prevMillis = 0;
   // filtering variables:
-  int sensorReadingInterval = 55;
+  int sensorReadingInterval = 50;
   
   int captureDuration = 1000;
-  float captureVoltage = 1.2;
+  float captureVoltage = 2.0;
   
   // sensor connections:
   // static const uint8_t analog_pins[] = {A0,A1,A2,A3,A4,A5,A6};
@@ -49,12 +43,12 @@
     // //myArray=(int*)calloc(arrSize,sizeof(int))
   
     delay(1000);
-    if (DEBUG) Serial.begin(115200);
+    if (DEBUG) Serial.begin(9600);
   
   }
   
-  
-  
+  const unsigned long int printInterval = 100; 
+  unsigned long int lastPrint = 0;
   void loop()
   {
   
@@ -69,36 +63,41 @@
       for (int t = 0; t < NUM_SENSORS; t++)
       {
         runningTotal[t] = runningTotal[t]  - readings[t][index];
-      }
-  
-      // read from the sensor:
-      for (int t = 0; t < NUM_SENSORS; t++)
-      {
         readings[t][index] = analogRead(t);
-      }
-  
-      // add the reading to the total:
-      for (int t = 0; t < NUM_SENSORS; t++)
-      {
         runningTotal[t] = runningTotal[t] + readings[t][index];
+        average[t] = runningTotal[t] / NUM_READINGS;
+        sensorVoltage[t] = float(average[t]) / 1024.0 * 5.0;
       }
+//  
+//      // read from the sensor:
+//      for (int t = 0; t < NUM_SENSORS; t++)
+//      {
+//        
+//      }
+//  
+//      // add the reading to the total:
+//      for (int t = 0; t < NUM_SENSORS; t++)
+//      {
+//        
+//      }
   
       // advance to the next position in the array:
       index = index + 1;
       // if we're at the end of the array...
       if (index >= NUM_READINGS) index = 0; // ...wrap around to the beginning:
-      // calculate the average:
-      for (int t = 0; t < NUM_SENSORS; t++)
-      {
-        average[t] = runningTotal[t] / NUM_READINGS;
-      }
+      
+//      // calculate the average:
+//      for (int t = 0; t < NUM_SENSORS; t++)
+//      {
+//        
+//      }
   
       // convert  to voltage
-      for (int t = 0; t < NUM_SENSORS; t++)
-      {
-        sensorVoltage[t] = float(average[t]) / 1024.0 * 5.0;
-        //if(DEBUG) Serial.print(sensorVoltage[t]);
-      }
+//      for (int t = 0; t < NUM_SENSORS; t++)
+//      {
+//        
+//        //if(DEBUG) Serial.print(sensorVoltage[t]);
+//      }
   
   
       prevMillis = millis();
@@ -122,35 +121,38 @@
         }
       }
     }
+    
     bool presence = false;
     for (int t = 0; t < NUM_SENSORS; t++)
     {
       presence = presence || capture[t];
-  
     }
   
-    if (DEBUG)
+    if (DEBUG && (millis()-lastPrint>printInterval))
     {
       for (int s = 0; s < NUM_SENSORS; s++)
       {
         Serial.print("S");
         Serial.print(s);
         Serial.print(": ");
+        
+        Serial.print(sensorVoltage[s]);
+        Serial.print("(");
         Serial.print(capture[s]);
+        Serial.print(")");
         Serial.print("    ");
       }
       Serial.println();
       if(presence) Serial.println("altar occupied");
+      lastPrint = millis();
     }
   
   
   
   
     // if su
-  
-  
+   
   
   }
   
   
-
