@@ -1,6 +1,6 @@
 // debugging mode or not.
 #define DEBUG false
-#define WDEBUG true
+#define WDEBUG false
 
 
 // Sensor operations:
@@ -15,14 +15,15 @@ FASTLED_USING_NAMESPACE
 #define DATA_PIN    13
 #define LED_TYPE    WS2812B
 #define COLOR_ORDER RGB
-#define NUM_LEDS   17
+#define NUM_LEDS   14
 CRGB leds[NUM_LEDS];
 int ledBrightness[NUM_LEDS];
+int fadeAmount[NUM_LEDS];
 #define BRIGHTNESS     255 //150
 #define FRAMES_PER_SECOND  120
 #define ROOTCOLOR CRGB(155, 50, 5)
 CRGB rootColor = CRGB(155, 50, 5);
-uint8_t rootHue = 62; //220 243
+uint8_t rootHue = 64; //220 243
 
 #define NUM_ALTARLEDS 4
 int gateInitBrightness = 255;
@@ -31,8 +32,8 @@ int coreInitBrightness = 127;
 unsigned long previousBreathingMillis = 0;
 int breathingDelay = 50;
 int minBreathingBrightness = 100;
-int maxBreathingBrightness = 250;
-int fadeAmount = 5;
+int maxBreathingBrightness = 255;
+int breathingAmount = 5;
 
 
 
@@ -45,7 +46,9 @@ enum state
   onenter, // prep for staying
   staying,
   occupied, // fully charged to grow
+  emptying,
   grow, // both arduinos filled
+  explode,
   //degrow, // someone steps out of one altar
   //burst, // both altars filled long enough
   //rest, // pause after burst
@@ -56,6 +59,7 @@ enum state
 
 state currentState = empty; // start with empty state
 // state machine variables:
+
 bool slavePresence = false;
 bool slaveOccupied = false;
 bool masterOccupied = false;
@@ -65,9 +69,9 @@ int stayingCounter  = 0;
 int stayingDelay = 50;
 unsigned long previousStayingMillis = 0;
 unsigned long previousStayingLightUpMillis = 0;
-int stayingLightUpDuration = 10000;
+int stayingLightUpDuration = 3000;
 
-int growCounter = 0;
+int growingCounter = 0;
 unsigned long lastPrint = 0;
 unsigned long sensorLastPrint = 0;
 bool gatesOff = false;
@@ -115,6 +119,7 @@ void setup()
   for (int l = 0; l < NUM_LEDS; l++)
   {
     ledBrightness[l] =  0;
+    fadeAmount[l] = 5;
   }
   // Core Lamp
 
@@ -140,21 +145,32 @@ void loop()
   // check sensor data, if present, update master occupied.
   slavePresence = sensoring();
 
+  readUdp(); // updates variables
+      masterOccupied = isMasterOccupied();
+
+      
+if (WDEBUG)
+{
   if (millis() - sensorLastPrint > 1000)
   {
     Console.print("Presence: ");
     Console.print(slavePresence);
-    Console.print("State: ");
-    Console.println(currentState);
+    Console.print(" State: ");
+    Console.print(currentState);
+    Console.print(" Master Occupied: ");
+    Console.println(masterOccupied);
     sensorLastPrint = millis();
   }
-
-
+}
+  
+  
 
 
   switch (currentState)
   {
     case empty:
+    // inform other that not occupied yet:
+      sendUDP("em", IP_Master, master_port);
       // EMPTY CASE: LED 0 is lit up dimly, LED[1-2] off, LED[3] breathing
 
       // LIGHT CONTROL:
@@ -163,28 +179,26 @@ void loop()
       // back LEDs
       leds[1] = CRGB::Black;
       leds[2] = CRGB::Black;
-
-      // check if master is occupied:
-      readUdp(); // updates variables
-      masterOccupied = isMasterOccupied();
-      // Gate Lamps: breath normal when empty, faster when master is occupied:
-      if (masterOccupied) breathingDelay = 5;
+      
+      
+      // Gate Lamps: breath normal when empty, faster when slave is occupied:
+      if (masterOccupied) breathingDelay = 1;
       else breathingDelay = 50;
 
       if (millis() - previousBreathingMillis > breathingDelay)
       {
         int tempBrightness = ledBrightness[3];
-        tempBrightness += fadeAmount;
+        tempBrightness += fadeAmount[3];
         // reverse the direction of the fading at the ends of the fade:
         if (tempBrightness <= minBreathingBrightness)
         {
           tempBrightness = minBreathingBrightness;
-          fadeAmount = -fadeAmount ;
+          fadeAmount[3] = -fadeAmount[3] ;
         }
         else if (tempBrightness >= maxBreathingBrightness)
         {
           tempBrightness = maxBreathingBrightness;
-          fadeAmount = -fadeAmount ;
+          fadeAmount[3] = -fadeAmount[3] ;
         }
         ledBrightness[3] = tempBrightness;
         leds[3] = CHSV(rootHue, 255, ledBrightness[3]);
@@ -193,21 +207,25 @@ void loop()
 
 
       // STATE CONTROL:
-      if (masterPresence)
+      if (slavePresence)
       {
         currentState = onenter;
-        Console.println("switching state to OnEnter");
+        if (WDEBUG) Console.println("switching state to OnEnter");
       }
 
       break;
 
+
+    ///////////////////////////////////////////////////
+    //                    ON ENTER                   //
+    ///////////////////////////////////////////////////
     case onenter:
       // increase brightness of Core Lamp
 
       ledBrightness[0] += 1;
-      if (ledBrightness[0] >= 255)
+      if (ledBrightness[0] >= maxBreathingBrightness)
       {
-        ledBrightness[0] = 255;
+        ledBrightness[0] = maxBreathingBrightness;
         coreOn = true;
       }
       leds[0] = CHSV(rootHue, 255, ledBrightness[0]);
@@ -225,43 +243,100 @@ void loop()
       {
         currentState = staying;
         previousStayingLightUpMillis = millis();
-        Console.println("switching state to Staying");
+        if (WDEBUG) Console.println("switching state to Staying");
       }
       break;
 
+
+    ///////////////////////////////////////////////////
+    //                    STAYING                    //
+    ///////////////////////////////////////////////////
     case staying:
-      if (millis() - lastPrint > 500)
+    // inform other that not occupied yet:
+      sendUDP("em", IP_Master, master_port);
+      // print current counter values
+      if (WDEBUG)
       {
-        Console.print("Staying  ");
-        Console.print(stayingCounter);
-        Console.print(" ");
-        Console.println(ledBrightness[stayingCounter]);
-        lastPrint = millis();
+//        if (millis() - lastPrint > 50)
+//        {
+//          Console.print("Staying: ");
+//          Console.print(stayingCounter);
+//          Console.print("   ");
+//          Console.print("P0: ");
+//          Console.print(ledBrightness[0]);
+//          Console.print(":");
+//          Console.print(fadeAmount[0]);
+//          Console.print("   ");
+//          Console.print("P1: ");
+//          Console.print(ledBrightness[1]);
+//          Console.print(":");
+//          Console.print(fadeAmount[1]);
+//          Console.print("   ");
+//          Console.print("P2: ");
+//          Console.print(ledBrightness[2]);
+//          Console.print(":");
+//          Console.print(fadeAmount[2]);
+//          Console.print("   ");
+//          Console.print("P3: ");
+//          Console.print(ledBrightness[3]);
+//          Console.print(":");
+//          Console.print(fadeAmount[3]);
+//          Console.println("   ");
+//
+//          lastPrint = millis();
+//        }
       }
-      
+
+      // first core is lit, it breathes, others off.
+      // after ten seconds, led[1] start fading in, and then breathes.
+
+      // increase brightness of next point.
       if ( (millis() - previousStayingMillis > stayingDelay) )
       {
-        if (ledBrightness[stayingCounter] < 255)
-      {
-        ledBrightness[stayingCounter] += 1;
-        leds[stayingCounter] = CHSV(rootHue, 255, ledBrightness[stayingCounter]);
-      }
-      else
-      {
-        ledBrightness[stayingCounter] = 255;
-        //
-      }
-        
+
+        for (int k = 0; k <= stayingCounter; k++)
+        {
+          ledBrightness[k] += fadeAmount[k];
+          if (ledBrightness[k] <= minBreathingBrightness)
+          {
+            ledBrightness[k] = minBreathingBrightness;
+            fadeAmount[k] = -fadeAmount[k] ;
+          }
+          else if (ledBrightness[k] >= maxBreathingBrightness)
+          {
+            ledBrightness[k] = maxBreathingBrightness;
+            fadeAmount[k] = -fadeAmount[k] ;
+          }
+          //if(k<=stayingCounter)
+          leds[k] = CHSV(rootHue, 255, ledBrightness[k]);
         }
+        previousStayingMillis = millis();
+      }
 
-      
-      
 
 
-      if ( (millis() - previousStayingLightUpMillis > stayingLightUpDuration) &&
-           (ledBrightness[stayingCounter] == 255))
+
+
+      if ( (millis() - previousStayingLightUpMillis > stayingLightUpDuration))
       {
         stayingCounter++;
+        if ( stayingCounter == NUM_ALTARLEDS)
+        {
+          currentState = occupied;
+          if(WDEBUG) Console.println("switching state to Occupied");
+          break;
+        }
+        fadeAmount[stayingCounter] = fadeAmount[stayingCounter - 1];
+        // bring next pixel to the prev pix val fast
+        while (ledBrightness[stayingCounter] != ledBrightness[stayingCounter - 1])
+        {
+          ledBrightness[stayingCounter]++;
+          leds[stayingCounter] = CHSV(rootHue, 255, ledBrightness[stayingCounter]);
+          delay(3);
+          FastLED.show();
+        }
+        
+
         previousStayingLightUpMillis = millis();
       }
 
@@ -272,57 +347,121 @@ void loop()
       //        Console.println("switching state to Emptying");
       //      }
 
-      if ( stayingCounter == NUM_ALTARLEDS)
-      {
-        currentState = occupied;
-        Console.println("switching state to Occupied");
-      }
+
       break;
 
+    case emptying:
+      ;
+      break;
+
+
+    ///////////////////////////////////////////////////
+    //                    OCCUPIED                   //
+    ///////////////////////////////////////////////////
     case occupied:
-    
+
       // all are max brightness
       // all are breathing fast!
+      sendUDP("oc", IP_Master, master_port);
+      
       breathingDelay = 10;
       if (millis() - previousBreathingMillis > breathingDelay)
       {
-        for(int k = 0; k<NUM_ALTARLEDS; k++)
+        for (int k = 0; k < NUM_ALTARLEDS; k++)
         {
-          ledBrightness[k] += fadeAmount;
-        // reverse the direction of the fading at the ends of the fade:
-        
-        if (ledBrightness[k] <= minBreathingBrightness)
-        {
-          ledBrightness[k] = minBreathingBrightness;
-          fadeAmount = -fadeAmount ;
-        }
-        else if (ledBrightness[k] >= maxBreathingBrightness)
-        {
-          ledBrightness[k] = maxBreathingBrightness;
-          fadeAmount = -fadeAmount ;
-        }
-        
-        leds[k] = CHSV(rootHue, 255, ledBrightness[k]);
-          
+          ledBrightness[k] += fadeAmount[k];
+          // reverse the direction of the fading at the ends of the fade:
+
+          if (ledBrightness[k] <= minBreathingBrightness)
+          {
+            ledBrightness[k] = minBreathingBrightness;
+            fadeAmount[k] = -fadeAmount[k] ;
           }
-        
-        
+          else if (ledBrightness[k] >= maxBreathingBrightness)
+          {
+            ledBrightness[k] = maxBreathingBrightness;
+            fadeAmount[k] = -fadeAmount[k] ;
+          }
+
+          leds[k] = CHSV(rootHue, 255, ledBrightness[k]);
+
+        }
+
+
         previousBreathingMillis = millis();
       }
-      
-       if (slaveOccupied)
-       currentState = grow;
-       if (!masterPresence)
-       currentState = reset;
+
+      if (masterOccupied)
+      {
+        if(WDEBUG) Console.println("switching state to Grow");
+        currentState = grow;
+        growingCounter = 4;
+      }
+//      if (!slavePresence)
+//        currentState = reset;
       break;
 
+    ///////////////////////////////////////////////////
+    //                    GROWING                    //
+    ///////////////////////////////////////////////////
     case grow:
-      leds[0] = CRGB::Red;
-      //Console.println("grow");
-      currentState = reset;
+
+      if ( (millis() - previousStayingMillis > stayingDelay) )
+      {
+
+        for (int k = 0; k <= growingCounter; k++)
+        {
+          ledBrightness[k] += fadeAmount[k];
+          if (ledBrightness[k] <= minBreathingBrightness)
+          {
+            ledBrightness[k] = minBreathingBrightness;
+            fadeAmount[k] = -fadeAmount[k] ;
+          }
+          else if (ledBrightness[k] >= maxBreathingBrightness)
+          {
+            ledBrightness[k] = maxBreathingBrightness;
+            fadeAmount[k] = -fadeAmount[k] ;
+          }
+          //if(k<=stayingCounter)
+          leds[k] = CHSV(rootHue, 255, ledBrightness[k]);
+        }
+        previousStayingMillis = millis();
+      }
+
+      if ( (millis() - previousStayingLightUpMillis > stayingLightUpDuration))
+      {
+        growingCounter++;
+        if ( growingCounter == NUM_LEDS)
+        {
+          currentState = explode;
+          if(WDEBUG) Console.println("switching state to Explode");
+          break;
+        }
+        fadeAmount[stayingCounter] = fadeAmount[stayingCounter - 1];
+        // bring next pixel to the prev pix val fast
+        while (ledBrightness[stayingCounter] != ledBrightness[stayingCounter - 1])
+        {
+          ledBrightness[stayingCounter]++;
+          leds[stayingCounter] = CHSV(rootHue, 255, ledBrightness[stayingCounter]);
+          delay(3);
+          FastLED.show();
+        }
+        
+
+        previousStayingLightUpMillis = millis();
+      }
+      
+      
       break;
 
-
+  
+    case explode:
+     // slave doesnt do anything.
+     delay(1000);
+     currentState = reset; 
+    ;
+    break;
+    
     case reset:
       //leds[1] = CRGB::Red;
       //delay(5000);
@@ -332,6 +471,7 @@ void loop()
       for (int l = 0; l < NUM_LEDS; l++)
       {
         ledBrightness[l] =  0;
+        leds[l] = CHSV(rootHue, 255, ledBrightness[l]);
       }
 
       ledBrightness[0] = coreInitBrightness;

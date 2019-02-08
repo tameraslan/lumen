@@ -10,12 +10,16 @@
 BridgeUDP Udp;
 // messaging:
 char packetBuffer[255]; //buffer to hold incoming packet
-// I am the Master, my ip: 10,0,0,21, local-port:4444.
-IPAddress IP_Master(10, 0, 0, 21); // other Arduino IP // Master=21->other 20, Slave=20 ->other 21
+
+// I am the Slave, my ip: 10,0,0,21, local-port:4444.
+int local_port = 4444;
+// Masters IP: 10.0.0.20, port:3333
+IPAddress IP_Master(10, 0, 0, 20);
+int master_port = 3333; 
+// PC: 
 IPAddress IP_PC(10, 0, 0, 10); // PC IP
-int local_port = 3333; // 4 slave, 3 master
 int PC_port = 7000;
-int master_port = 4444; // 3 slave, 4 master
+
 
 bool masterOccupiedMessage = false;
 
@@ -55,16 +59,18 @@ void readUdp()
     {
       masterOccupiedMessage = true;
       // Serial.println("OtherOccupied == TRUE");
-      return true;
+      return;
     }
     else if (phrase == "em")
     {
-      //slaveOccupied = false;
+      masterOccupiedMessage = false;
       // Serial.println("OtherOccupied == FALSE");
-      return false;
+      return;
     }
   }
   //return false;
+  //masterOccupiedMessage = false;
+  //return;
 }
 
 
