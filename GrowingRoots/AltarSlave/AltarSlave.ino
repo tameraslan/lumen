@@ -1,5 +1,5 @@
 // debugging mode or not.
-#define DEBUG false
+#define DEBUG true
 #define WDEBUG false
 
 
@@ -13,7 +13,7 @@
 #include "FastLED.h"
 FASTLED_USING_NAMESPACE
 #define DATA_PIN    13
-#define LED_TYPE    WS2812B
+#define LED_TYPE    WS2811
 #define COLOR_ORDER RGB
 #define NUM_LEDS   14
 CRGB leds[NUM_LEDS];
@@ -48,7 +48,7 @@ enum state
   occupied, // fully charged to grow
   emptying,
   grow, // both arduinos filled
-  explode,
+  burst,
   //degrow, // someone steps out of one altar
   //burst, // both altars filled long enough
   //rest, // pause after burst
@@ -57,25 +57,32 @@ enum state
 
 };
 
-state currentState = empty; // start with empty state
 // state machine variables:
-
+state currentState = empty; // start with empty state
+// general
 bool slavePresence = false;
 bool slaveOccupied = false;
 bool masterOccupied = false;
-
+// OnEnter:
+bool gatesOff = false;
+bool coreOn = false;
+// Staying
 int stayingCounter  = 0;
-
 int stayingDelay = 50;
 unsigned long previousStayingMillis = 0;
 unsigned long previousStayingLightUpMillis = 0;
 int stayingLightUpDuration = 3000;
-
+// Emptying:
+unsigned long previousEmptyingMillis  = 0;
+int emptyingDelay = 30;
+int emptyingAmount = 10;
+int emptyingCounter = 0;
+// Growing:
 int growingCounter = 0;
+
 unsigned long lastPrint = 0;
 unsigned long sensorLastPrint = 0;
-bool gatesOff = false;
-bool coreOn = false;
+
 
 
 
@@ -85,24 +92,18 @@ bool coreOn = false;
 void setup()
 {
   delay(1000); // whait till everything is ready
-
   // Sensors init
   for (int i = 0; i < NUM_SENSORS; i++)
   {
     captureVoltage[i] = thresholds[i]; // initialize capture values
   }
-
-
   // LEDS init
   FastLED.addLeds<LED_TYPE, DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip); // initialize leds
   FastLED.setBrightness(BRIGHTNESS); // initialize led brightness
   FastLED.showColor(CRGB(0, 0, 0));  // all LEDs off
-
-
   // Comm init
   Bridge.begin();        // initialize Bridge
   Udp.begin(local_port); // start listening to local port
-
   // Debugging:
   if (DEBUG) Serial.begin(115200);
   if (WDEBUG)
@@ -119,10 +120,10 @@ void setup()
   for (int l = 0; l < NUM_LEDS; l++)
   {
     ledBrightness[l] =  0;
-    fadeAmount[l] = 5;
+    fadeAmount[l] = 3;
   }
-  // Core Lamp
 
+  // init altar before loop (used also as reset)
   ledBrightness[0] = coreInitBrightness;
   leds[0] = rootColor;
   // back LEDs
@@ -132,7 +133,6 @@ void setup()
   ledBrightness[3] = gateInitBrightness;
   leds[3] = rootColor;
   FastLED.show();
-
 }
 
 
@@ -140,36 +140,47 @@ void setup()
 void loop()
 {
   // update info on both altars if they are empty or full:
-  // listen to UDP messages, if message received, update slave occupied
-  //readUdp();
   // check sensor data, if present, update master occupied.
   slavePresence = sensoring();
+  // listen to UDP messages, if message received, update slave occupied
+  readUdp(); // updates variables and empty udp caChe.
+  masterOccupied = isMasterOccupied();
 
-  readUdp(); // updates variables
-      masterOccupied = isMasterOccupied();
 
-      
-if (WDEBUG)
-{
-  if (millis() - sensorLastPrint > 1000)
+  if (WDEBUG)
   {
-    Console.print("Presence: ");
-    Console.print(slavePresence);
-    Console.print(" State: ");
-    Console.print(currentState);
-    Console.print(" Master Occupied: ");
-    Console.println(masterOccupied);
-    sensorLastPrint = millis();
+    if (millis() - sensorLastPrint > 1000)
+    {
+      Console.print("Presence: ");
+      Console.print(slavePresence);
+      Console.print(" State: ");
+      Console.print(currentState);
+      Console.print(" Master Occupied: ");
+      Console.println(masterOccupied);
+      sensorLastPrint = millis();
+    }
   }
-}
-  
-  
+  if (DEBUG)
+  {
+    if (millis() - sensorLastPrint > 1000)
+    {
+      Serial.print("Presence: ");
+      Serial.print(slavePresence);
+      Serial.print(" State: ");
+      Serial.print(currentState);
+      Serial.print(" Master Occupied: ");
+      Serial.println(masterOccupied);
+      sensorLastPrint = millis();
+    }
+  }
+
+
 
 
   switch (currentState)
   {
     case empty:
-    // inform other that not occupied yet:
+      // inform other that not occupied yet:
       sendUDP("em", IP_Master, master_port);
       // EMPTY CASE: LED 0 is lit up dimly, LED[1-2] off, LED[3] breathing
 
@@ -179,11 +190,11 @@ if (WDEBUG)
       // back LEDs
       leds[1] = CRGB::Black;
       leds[2] = CRGB::Black;
-      
-      
+
+
       // Gate Lamps: breath normal when empty, faster when slave is occupied:
       if (masterOccupied) breathingDelay = 1;
-      else breathingDelay = 50;
+      else breathingDelay = 30;
 
       if (millis() - previousBreathingMillis > breathingDelay)
       {
@@ -216,8 +227,13 @@ if (WDEBUG)
       break;
 
 
+
     ///////////////////////////////////////////////////
     //                    ON ENTER                   //
+    ///////////////////////////////////////////////////
+    // the case when someone enters the altar.
+    // it dims the gate lights and lits up Core lamp in a quick way.
+    // once all lamps are ready, then next state is Staying.
     ///////////////////////////////////////////////////
     case onenter:
       // increase brightness of Core Lamp
@@ -251,44 +267,46 @@ if (WDEBUG)
     ///////////////////////////////////////////////////
     //                    STAYING                    //
     ///////////////////////////////////////////////////
+    // the case when the person stays continuously in altar.
+    // lights grow up and breathe
     case staying:
-    // inform other that not occupied yet:
+      // inform other that not occupied yet:
       sendUDP("em", IP_Master, master_port);
       // print current counter values
       if (WDEBUG)
       {
-//        if (millis() - lastPrint > 50)
-//        {
-//          Console.print("Staying: ");
-//          Console.print(stayingCounter);
-//          Console.print("   ");
-//          Console.print("P0: ");
-//          Console.print(ledBrightness[0]);
-//          Console.print(":");
-//          Console.print(fadeAmount[0]);
-//          Console.print("   ");
-//          Console.print("P1: ");
-//          Console.print(ledBrightness[1]);
-//          Console.print(":");
-//          Console.print(fadeAmount[1]);
-//          Console.print("   ");
-//          Console.print("P2: ");
-//          Console.print(ledBrightness[2]);
-//          Console.print(":");
-//          Console.print(fadeAmount[2]);
-//          Console.print("   ");
-//          Console.print("P3: ");
-//          Console.print(ledBrightness[3]);
-//          Console.print(":");
-//          Console.print(fadeAmount[3]);
-//          Console.println("   ");
-//
-//          lastPrint = millis();
-//        }
+        //        if (millis() - lastPrint > 50)
+        //        {
+        //          Console.print("Staying: ");
+        //          Console.print(stayingCounter);
+        //          Console.print("   ");
+        //          Console.print("P0: ");
+        //          Console.print(ledBrightness[0]);
+        //          Console.print(":");
+        //          Console.print(fadeAmount[0]);
+        //          Console.print("   ");
+        //          Console.print("P1: ");
+        //          Console.print(ledBrightness[1]);
+        //          Console.print(":");
+        //          Console.print(fadeAmount[1]);
+        //          Console.print("   ");
+        //          Console.print("P2: ");
+        //          Console.print(ledBrightness[2]);
+        //          Console.print(":");
+        //          Console.print(fadeAmount[2]);
+        //          Console.print("   ");
+        //          Console.print("P3: ");
+        //          Console.print(ledBrightness[3]);
+        //          Console.print(":");
+        //          Console.print(fadeAmount[3]);
+        //          Console.println("   ");
+        //
+        //          lastPrint = millis();
+        //        }
       }
 
       // first core is lit, it breathes, others off.
-      // after ten seconds, led[1] start fading in, and then breathes.
+      // after certain seconds, led[1] start fading in, and then breathes.
 
       // increase brightness of next point.
       if ( (millis() - previousStayingMillis > stayingDelay) )
@@ -322,8 +340,10 @@ if (WDEBUG)
         stayingCounter++;
         if ( stayingCounter == NUM_ALTARLEDS)
         {
+          //// STATE CHANGE TO OCCUPIED////////////////////////
           currentState = occupied;
-          if(WDEBUG) Console.println("switching state to Occupied");
+          if (WDEBUG) Console.println("switching state to Occupied");
+          if (DEBUG) Serial.println("switching state to Occupied");
           break;
         }
         fadeAmount[stayingCounter] = fadeAmount[stayingCounter - 1];
@@ -335,23 +355,57 @@ if (WDEBUG)
           delay(3);
           FastLED.show();
         }
-        
+
 
         previousStayingLightUpMillis = millis();
       }
 
-      // CONTROL:
-      //      if (!masterPresence) // if they leave
-      //      {
-      //        currentState = emptying;
-      //        Console.println("switching state to Emptying");
-      //      }
+      //CONTROL:
+      if (!slavePresence) // iin case the person leaves.
+      {
+        currentState = emptying;
+        emptyingCounter = stayingCounter;
+        if (WDEBUG) Console.println("switching state to Emptying");
+        if (DEBUG) Serial.println("switching state to Emptying");
+      }
 
 
       break;
 
+
+    ///////////////////////////////////////////////////
+    //                    Emptying                    //
+    ///////////////////////////////////////////////////
     case emptying:
-      ;
+      //  empty all until base.
+      // inform other that not occupied yet:
+      sendUDP("em", IP_Master, master_port);
+      // if the state comes from staying, then the stayingCounter keeps track.
+
+      if ( (millis() - previousEmptyingMillis > emptyingDelay) )
+      {
+
+        //for (int k = stayingCounter; k >= 0; k--)
+        if (emptyingCounter >= 0)
+        {
+          ledBrightness[emptyingCounter] -= emptyingAmount;
+          if ( ledBrightness[emptyingCounter] <= 0)
+          {
+            ledBrightness[emptyingCounter] = 0;
+            emptyingCounter--;
+          }
+          leds[emptyingCounter] = CHSV(rootHue, 255, ledBrightness[emptyingCounter]);
+        }
+        else
+        {
+          // STATE CHANGE:
+          currentState = reset;
+          if (WDEBUG) Console.println("switching state to Emptying");
+          if (DEBUG) Serial.println("switching state to Emptying");
+        }
+        previousEmptyingMillis = millis();
+      }
+
       break;
 
 
@@ -359,19 +413,16 @@ if (WDEBUG)
     //                    OCCUPIED                   //
     ///////////////////////////////////////////////////
     case occupied:
-
       // all are max brightness
-      // all are breathing fast!
+      // all are breathing fast! waiting for other altar to get occupied.
       sendUDP("oc", IP_Master, master_port);
-      
+
       breathingDelay = 10;
       if (millis() - previousBreathingMillis > breathingDelay)
       {
         for (int k = 0; k < NUM_ALTARLEDS; k++)
         {
           ledBrightness[k] += fadeAmount[k];
-          // reverse the direction of the fading at the ends of the fade:
-
           if (ledBrightness[k] <= minBreathingBrightness)
           {
             ledBrightness[k] = minBreathingBrightness;
@@ -382,24 +433,32 @@ if (WDEBUG)
             ledBrightness[k] = maxBreathingBrightness;
             fadeAmount[k] = -fadeAmount[k] ;
           }
-
           leds[k] = CHSV(rootHue, 255, ledBrightness[k]);
-
         }
-
-
         previousBreathingMillis = millis();
       }
 
       if (masterOccupied)
       {
-        if(WDEBUG) Console.println("switching state to Grow");
+        //////////////////////STATE CHANGE////////////////////////////
+        if (DEBUG) Serial.println("switching state to Grow");
+        if (WDEBUG) Console.println("switching state to Grow");
         currentState = grow;
-        growingCounter = 4;
+        growingCounter = NUM_ALTARLEDS;
       }
-//      if (!slavePresence)
-//        currentState = reset;
+      if (!slavePresence)
+      {
+        //////////////////////STATE CHANGE////////////////////////////
+        if (DEBUG) Serial.println("switching state to Empty");
+        if (WDEBUG) Console.println("switching state to Empty");
+        currentState = empty;
+        emptyingCounter = NUM_ALTARLEDS;
+      }
+
       break;
+
+
+
 
     ///////////////////////////////////////////////////
     //                    GROWING                    //
@@ -433,8 +492,10 @@ if (WDEBUG)
         growingCounter++;
         if ( growingCounter == NUM_LEDS)
         {
-          currentState = explode;
-          if(WDEBUG) Console.println("switching state to Explode");
+          ///////////////////////STATE CHANGE///////////////////////////////////
+          currentState = burst;
+          if (WDEBUG) Console.println("switching state to Burst");
+          if (DEBUG) Serial.println("switching state to Burst");
           break;
         }
         fadeAmount[stayingCounter] = fadeAmount[stayingCounter - 1];
@@ -446,34 +507,39 @@ if (WDEBUG)
           delay(3);
           FastLED.show();
         }
-        
-
         previousStayingLightUpMillis = millis();
       }
-      
-      
       break;
 
-  
-    case explode:
-     // slave doesnt do anything.
-     delay(1000);
-     currentState = reset; 
-    ;
-    break;
-    
+
+    ///////////////////////////////////////////////////
+    //                    BURST                      //
+    ///////////////////////////////////////////////////
+    case burst:
+      // slave doesnt do anything.
+      delay(1000);
+      /////////////STATE CHANGE//////////
+      if (WDEBUG) Console.println("switching state to Reset");
+      if (DEBUG) Serial.println("switching state to Reset");
+      currentState = reset;
+      ;
+      break;
+
+
+
+
+
+    ///////////////////////////////////////////////////
+    //                    RESET                      //
+    ///////////////////////////////////////////////////
     case reset:
-      //leds[1] = CRGB::Red;
-      //delay(5000);
       // initialize variables.
-
-
       for (int l = 0; l < NUM_LEDS; l++)
       {
         ledBrightness[l] =  0;
         leds[l] = CHSV(rootHue, 255, ledBrightness[l]);
       }
-
+      // Altar prepare
       ledBrightness[0] = coreInitBrightness;
       leds[0] = rootColor;
       // back LEDs
@@ -482,10 +548,17 @@ if (WDEBUG)
       // Gate Lamps: breath normal when empty, faster when slave is occupied:
       ledBrightness[3] = gateInitBrightness;
       leds[3] = rootColor;
-      currentState = empty;
+
       gatesOff = false;
       coreOn = false;
       stayingCounter = 0;
+
+      // add also fade in to the empty state.
+
+      /////////////STATE CHANGE//////////
+      if (WDEBUG) Console.println("switching state to Empty");
+      if (DEBUG) Serial.println("switching state to Empty");
+      currentState = empty;
       break;
 
     default:

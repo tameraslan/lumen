@@ -20,7 +20,7 @@
     int sensorReadingInterval = 50; //55
     int captureDuration = 1000;
     float captureVoltage[NUM_SENSORS];
-    float thresholds[] = {0.5, 0.5, 0.5, 0.5, 1.0, 1.0};
+    float thresholds[] = {2, 0.5, 0.5, 0.5, 1.0, 1.0};
     unsigned long prevSensorMillis = 0;
     
     bool sensoring()
@@ -85,20 +85,20 @@
       {
         presence = presence || capture[t];
       }
-    
-      /*if (DEBUG)
-        {
-        for (int s = 0; s < NUM_SENSORS; s++)
-        {
-          Serial.print("S");
-          Serial.print(s);
-          Serial.print(": ");
-          Serial.print(capture[s]);
-          Serial.print("    ");
-        }
-          Serial.println();
-          if(presence) Serial.println("altar occupied");
-        }*/
+//    
+//      if (DEBUG)
+//        {
+//        for (int s = 0; s < NUM_SENSORS; s++)
+//        {
+//          Serial.print("S");
+//          Serial.print(s);
+//          Serial.print(": ");
+//          Serial.print(capture[s]);
+//          Serial.print("    ");
+//        }
+//          Serial.println();
+//          if(presence) Serial.println("altar occupied");
+//        }
       return presence;
     }
 #endif

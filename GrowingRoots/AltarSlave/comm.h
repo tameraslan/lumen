@@ -34,27 +34,28 @@ void readUdp()
   int packetSize = Udp.parsePacket();
   if (packetSize)
   {
-    if (DEBUG)
-    {
-      Serial.print("Received packet of size ");
-      Serial.println(packetSize);
-      Serial.print("From ");
-      IPAddress remoteIp = Udp.remoteIP();
-      Serial.print(remoteIp);
-      Serial.print(", port ");
-      Serial.println(Udp.remotePort());
-    }
+//    if (DEBUG)
+//    {
+//      
+//      Serial.print("Received packet of size ");
+//      Serial.println(packetSize);
+//      Serial.print("From ");
+//      IPAddress remoteIp = Udp.remoteIP();
+//      Serial.print(remoteIp);
+//      Serial.print(", port ");
+//      Serial.println(Udp.remotePort());
+//    }
     // read the packet into packetBufffer
     int len = Udp.read(packetBuffer, 255);
     String phrase;
     phrase = String(phrase + packetBuffer);
     if (len > 0) packetBuffer[len] = 0;
-    if (DEBUG)
-    {
-      Serial.println("Contents:");
-      Serial.println(packetBuffer);
-      Serial.println(phrase);
-    }
+//    if (DEBUG)
+//    {
+//      Serial.println("Contents:");
+//      Serial.println(packetBuffer);
+//      Serial.println(phrase);
+//    }
     if (phrase == "oc")
     {
       masterOccupiedMessage = true;
