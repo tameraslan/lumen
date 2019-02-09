@@ -5,7 +5,7 @@
 
 
 // is this arduino master or slave???
-#define MASTER true
+#define MASTER false
 
 // Sensor operations:
 #include "sensoring.h"
@@ -88,7 +88,8 @@ int growingLightUpDuration = 3000;
 
 // resting:
 unsigned long restEnter = 0;
-int restingTime = 300000;
+unsigned long restingTime = 300000;
+int restingTimeSeconds = 300; 
 unsigned long previousRestingMillis = 0;
 int restingDelay = 50;
 
@@ -717,7 +718,13 @@ void loop()
         //sendUDP("em", IP_Other, other_port);
 //        lastMessageSent = millis();
 //        }
-    if( (millis()-restEnter) > restingTime)
+    if (DEBUG) 
+    {
+      Serial.println("time since enter");
+      Serial.println((millis()-restEnter));
+    }
+    //if( ((millis()-restEnter)/1000) > restingTimeSeconds) 
+    if( millis()-restEnter > restingTime)
     {
       /////////////STATE CHANGE//////////
       if (WDEBUG) Console.println("switching state to reset");
