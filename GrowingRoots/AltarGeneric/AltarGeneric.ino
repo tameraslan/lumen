@@ -1,6 +1,6 @@
 // debugging mode or not.
 #define DEBUG false
-#define WDEBUG true
+#define WDEBUG false
 
 
 
@@ -76,7 +76,7 @@ int stayingCounter  = 0;
 int stayingDelay = 50;
 unsigned long previousStayingMillis = 0;
 unsigned long previousStayingLightUpMillis = 0;
-int stayingLightUpDuration = 3000;
+int stayingLightUpDuration = 10000;
 // Emptying:
 unsigned long previousEmptyingMillis  = 0;
 int emptyingDelay = 30;
@@ -84,9 +84,11 @@ int emptyingAmount = 10;
 int emptyingCounter = 0;
 // Growing:
 int growingCounter = 0;
+int growingLightUpDuration = 3000;
+
 // resting:
 unsigned long restEnter = 0;
-int restingTime = 30000;
+int restingTime = 300000;
 unsigned long previousRestingMillis = 0;
 int restingDelay = 50;
 
@@ -625,7 +627,7 @@ void loop()
         previousStayingMillis = millis();
       }
 
-      if ( (millis() - previousStayingLightUpMillis > stayingLightUpDuration))
+      if ( (millis() - previousStayingLightUpMillis > growingLightUpDuration))
       {
         growingCounter++;
         if ( growingCounter == NUM_LEDS)
