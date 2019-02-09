@@ -20,7 +20,7 @@
     int sensorReadingInterval = 50; //55
     int captureDuration = 1000;
     float captureVoltage[NUM_SENSORS];
-    float thresholds[] = {2, 0.5, 0.5, 0.5, 1.0, 1.0};
+    float thresholds[] = {0.5, 0.5, 0.5, 0.5, 1.0}; //, 1.0;
     unsigned long prevSensorMillis = 0;
     
     bool sensoring()

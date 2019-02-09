@@ -22,7 +22,7 @@
   int sensorReadingInterval = 50;
   
   int captureDuration = 1000;
-  float captureVoltage = 2.0;
+  float captureVoltage = 0.5;
   
   // sensor connections:
   // static const uint8_t analog_pins[] = {A0,A1,A2,A3,A4,A5,A6};

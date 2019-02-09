@@ -12,14 +12,32 @@ BridgeUDP Udp;
 char packetBuffer[255]; //buffer to hold incoming packet
 
 // I am the Slave, my ip: 10,0,0,21, local-port:4444.
-int local_port = 4444;
+int local_port;
+
 // Masters IP: 10.0.0.20, port:3333
-IPAddress IP_Master(10, 0, 0, 20);
-int master_port = 3333; 
+IPAddress IP_Other;
+int other_port; 
 // PC: 
 IPAddress IP_PC(10, 0, 0, 10); // PC IP
 int PC_port = 7000;
 
+void setup(bool isMaster)
+{
+  if (MASTER)
+  {
+    // we are master
+    local_port =  4444;
+     IP_Other = IPAddress(10, 0, 0, 20);
+    other_port = 3333;  
+    }
+    else
+    {
+      // we are slave
+      IP_Other = IPAddress(10, 0, 0, 21);
+      local_port =  3333;
+      other_port = 4444;
+      }
+  }
 
 bool masterOccupiedMessage = false;
 
